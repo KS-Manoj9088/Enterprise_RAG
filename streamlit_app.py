@@ -270,13 +270,14 @@ st.markdown("""
 
 # ── Helpers ──
 @st.cache_resource(show_spinner=False)
-def load_pipeline(model_name, vectordb_path, data_path):
+def load_pipeline(model_name, vectordb_path, data_path, provider="openrouter"):
     """Load RAG pipeline (cached across reruns)."""
     from src.pipeline import RAGPipeline
     pipeline = RAGPipeline(
         data_path=data_path,
         vectordb_path=vectordb_path,
         llm_model=model_name,
+        provider=provider,
     )
     return pipeline
 
@@ -322,20 +323,62 @@ with st.sidebar:
     st.markdown("## ⚙️ Settings")
     st.markdown('<div class="side-divider"></div>', unsafe_allow_html=True)
 
-    # Model selection
-    model_options = {
-        "GLM-4.5-Air (Best Balance)": "z-ai/glm-4.5-air:free",
-        "Step-3.5-Flash (Fast)": "stepfun/step-3.5-flash:free",
-        "GPT-OSS-120B (Strong)": "openai/gpt-oss-120b:free",
-        "Trinity-Mini (Efficient)": "arcee-ai/trinity-mini:free",
-    }
-    selected_model_label = st.selectbox(
-        "🤖 LLM Model",
-        options=list(model_options.keys()),
+    # Provider selection
+    provider_options = ["OpenRouter (Cloud)", "Ollama (Local)"]
+    selected_provider_label = st.selectbox(
+        "🔌 LLM Provider",
+        options=provider_options,
         index=0,
-        help="All models are FREE via OpenRouter",
+        help="OpenRouter = cloud (needs API key), Ollama = local (no internet)",
     )
-    selected_model = model_options[selected_model_label]
+    if "Ollama" in selected_provider_label:
+        selected_provider = "ollama"
+    else:
+        selected_provider = "openrouter"
+
+    # Provider status
+    if selected_provider == "ollama":
+        from src.generator import is_ollama_available, list_ollama_models
+        ollama_online = is_ollama_available()
+        if ollama_online:
+            st.success("✅ Ollama is running")
+            ollama_models = list_ollama_models()
+        else:
+            st.error("❌ Ollama is offline — start it first")
+            ollama_models = []
+    else:  # openrouter
+        or_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if or_key:
+            st.success("✅ OPENROUTER_API_KEY is set")
+        else:
+            st.warning("⚠️ Set OPENROUTER_API_KEY in .env")
+
+    # Model selection — dynamic based on provider
+    if selected_provider == "openrouter":
+        model_options = {
+            "GLM-4.5-Air (Best Balance)": "z-ai/glm-4.5-air:free",
+            "Step-3.5-Flash (Fast)": "stepfun/step-3.5-flash:free",
+            "GPT-OSS-120B (Strong)": "openai/gpt-oss-120b:free",
+            "Trinity-Mini (Efficient)": "arcee-ai/trinity-mini:free",
+        }
+        selected_model_label = st.selectbox(
+            "🤖 LLM Model",
+            options=list(model_options.keys()),
+            index=0,
+            help="All models are FREE via OpenRouter",
+        )
+        selected_model = model_options[selected_model_label]
+    else:  # ollama
+        if ollama_models:
+            selected_model = st.selectbox(
+                "🤖 Ollama Model",
+                options=ollama_models,
+                index=0,
+                help="Models pulled locally via `ollama pull <model>`",
+            )
+        else:
+            st.warning("No models found. Run: `ollama pull llama3.2`")
+            selected_model = "llama3.2"
 
     st.markdown('<div class="side-divider"></div>', unsafe_allow_html=True)
 
@@ -393,7 +436,7 @@ with st.sidebar:
             st.error("No documents found!")
         else:
             with st.spinner("Processing documents..."):
-                pipeline = load_pipeline(selected_model, "./storage/shared_vectors", data_path)
+                pipeline = load_pipeline(selected_model, "./storage/shared_vectors", data_path, selected_provider)
                 success = pipeline.ingest(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
                 if success:
                     st.session_state.pipeline = pipeline
@@ -410,8 +453,8 @@ with st.sidebar:
         st.rerun()
 
     st.markdown('<div class="side-divider"></div>', unsafe_allow_html=True)
-    st.caption("Built with LangChain · ChromaDB · OpenRouter")
-    st.caption("100% Free — No GPU Required")
+    st.caption("Built with LangChain · ChromaDB")
+    st.caption("OpenRouter · Ollama")
 
 
 # ═════════════════════════════════════
@@ -492,12 +535,13 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                 start_time = time.time()
 
                 if st.session_state.pipeline is None:
-                    st.session_state.pipeline = load_pipeline(selected_model, "./storage/shared_vectors", data_path)
+                    st.session_state.pipeline = load_pipeline(selected_model, "./storage/shared_vectors", data_path, selected_provider)
 
                 pipeline = st.session_state.pipeline
 
                 if not st.session_state.rag_ready:
                     pipeline.llm_model = selected_model
+                    pipeline.provider = selected_provider
                     success = pipeline.setup_qa(top_k=top_k)
                     if success:
                         st.session_state.rag_ready = True

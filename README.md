@@ -2,7 +2,7 @@
 
 A complete, production-ready **Retrieval Augmented Generation** system with **Google OAuth**, **per-user document management**, **OCR support**, and a **React frontend**. Ask questions about your documents — answers are grounded in your data, never hallucinated.
 
-**100% free** — open-source embeddings (HuggingFace) + free LLM via OpenRouter.
+**100% free** — open-source embeddings (HuggingFace) + free LLMs via OpenRouter or run models locally with Ollama.
 
 ---
 
@@ -71,7 +71,7 @@ A complete, production-ready **Retrieval Augmented Generation** system with **Go
 │   │  └────────┘  └─────────┘  └────┬─────┘                          │   │
 │   │                                ▼                                │   │
 │   │                         ┌────────────┐                          │   │
-│   │                         │ 4. LLM     │ (OpenRouter, free)       │   │
+│   │                         │ 4. LLM     │ (OpenRouter cloud / Ollama local) │   │
 │   │                         └─────┬──────┘                          │   │
 │   │                               ▼                                 │   │
 │   │                         ┌────────────┐                          │   │
@@ -93,7 +93,7 @@ A complete, production-ready **Retrieval Augmented Generation** system with **Go
 | **50 MB Limit** | Files over 50 MB are rejected with a clear error message |
 | **OCR Support** | Extract text from scanned PDFs and images using Tesseract |
 | **Smart Fallback** | If PDF text extraction yields < 50 chars, auto-falls back to OCR |
-| **Multiple LLMs** | Switch between 4 free LLM models via OpenRouter |
+| **Multiple LLMs** | Switch between OpenRouter cloud models (free) or run locally with Ollama |
 | **Strict Prompt** | LLM only answers from your documents — no hallucination |
 | **9 Prompt Templates** | Strict, conversational, analytical, and domain-specific styles |
 | **Source Citations** | Every answer shows which document chunks were used |
@@ -114,7 +114,7 @@ A complete, production-ready **Retrieval Augmented Generation** system with **Go
 | **RAG Core** | LangChain (LCEL pattern) | Pipeline orchestration |
 | **Embeddings** | HuggingFace `all-MiniLM-L6-v2` | Text → vectors (local, free) |
 | **Vector DB** | ChromaDB | Similarity search storage |
-| **LLM** | OpenRouter (GLM-4.5-Air) | Answer generation (cloud, free) |
+| **LLM** | OpenRouter (cloud, free) / Ollama (local) | Answer generation |
 | **OCR** | Tesseract + pdf2image | Scanned document extraction |
 | **PDF** | PyPDF | Regular PDF text extraction |
 
@@ -428,7 +428,7 @@ After ingestion, your vectors persist on disk. You only need to re-ingest when y
 | **1. Query** | User asks a question in chat | `src/retriever.py` | — |
 | **2. Embed Query** | Question converted to 384-dim vector | `src/retriever.py` | Same HuggingFace model |
 | **3. Retrieve** | Find top-K most similar chunks via cosine similarity | `src/retriever.py` | ChromaDB |
-| **4. LLM** | Send context + question to LLM with strict prompt | `src/generator.py` | OpenRouter (GLM-4.5-Air) |
+| **Step 4 — LLM** | Send context + question to LLM with strict prompt | `src/generator.py` | OpenRouter *or* Ollama |
 | **5. Response** | LLM answers from documents only — no hallucination | `src/generator.py` | — |
 
 ### Authentication Flow
@@ -487,9 +487,10 @@ All endpoints (except auth) require `Authorization: Bearer <jwt>` header.
 
 | Method | Endpoint | Body | Description |
 |--------|----------|------|-------------|
-| `POST` | `/api/rag/ingest` | `{ "chunk_size": 1000, "chunk_overlap": 100, "model": "..." }` | Ingest all uploaded docs into vector DB |
-| `POST` | `/api/rag/query` | `{ "question": "...", "top_k": 3, "model": "..." }` | Query the RAG pipeline |
+| `POST` | `/api/rag/ingest` | `{ "chunk_size": 1000, "chunk_overlap": 100, "model": "...", "provider": "openrouter" }` | Ingest all uploaded docs into vector DB |
+| `POST` | `/api/rag/query` | `{ "question": "...", "top_k": 3, "model": "...", "provider": "openrouter" }` | Query the RAG pipeline |
 | `GET` | `/api/rag/stats` | — | Get vector DB stats |
+| `GET` | `/api/rag/providers` | — | List available providers and their models |
 
 ### System
 
@@ -547,7 +548,7 @@ docs = retriever.invoke("What is machine learning?")
 
 #### `src/generator.py` — Steps 4, 5: LLM → Response
 
-Connects to OpenRouter's API (OpenAI-compatible) to access free LLMs. Uses LangChain's LCEL (LangChain Expression Language) to build the chain:
+Connects to OpenRouter's API (OpenAI-compatible) to access free LLMs, or to a local **Ollama** server for fully offline inference. Uses LangChain's LCEL (LangChain Expression Language) to build the chain:
 
 ```python
 chain = (
@@ -565,7 +566,11 @@ Imports the strict prompt from `prompts/strict/strict_qa.py` to ensure the LLM o
 The `RAGPipeline` class ties everything together:
 
 ```python
-rag = RAGPipeline(data_path="./data", llm_model="z-ai/glm-4.5-air:free")
+rag = RAGPipeline(
+    data_path="./data",
+    llm_model="z-ai/glm-4.5-air:free",
+    provider="openrouter"  # or "ollama"
+)
 rag.ingest(chunk_size=1000, chunk_overlap=100)  # A → B → C → D
 rag.setup_qa(top_k=3)                           # Connect retriever + LLM
 answer, sources = rag.query("What is...?")       # 1 → 2 → 3 → 4 → 5
@@ -626,6 +631,7 @@ Creates the SQLite engine at `storage/db/rag.db` with SQLAlchemy. Provides `get_
 - `POST /api/rag/ingest` → runs A → B → C → D on the user's documents, stores vectors in `storage/vectors/<uuid>/`
 - `POST /api/rag/query` → runs 1 → 2 → 3 → 4 → 5 against the user's private vector DB, returns answer + source chunks with preview
 - `GET /api/rag/stats` → returns vector count for the authenticated user
+- `GET /api/rag/providers` → returns available providers (OpenRouter, Ollama) with their models and status
 - Maintains an in-memory cache of per-user pipelines for fast repeated queries
 
 ---
@@ -660,7 +666,7 @@ Pre-configured Axios instance with:
 - Base URL from `VITE_API_URL` environment variable
 - **Request interceptor**: attaches JWT token from localStorage to every request
 - **Response interceptor**: on 401 → auto-clears storage and redirects to login
-- Exported functions: `googleLogin`, `uploadDocument`, `listDocuments`, `deleteDocument`, `ingestDocuments`, `queryRag`, `getRagStats`, `getOcrStatus`
+- Exported functions: `googleLogin`, `uploadDocument`, `listDocuments`, `deleteDocument`, `ingestDocuments`, `queryRag`, `getRagStats`, `getOcrStatus`, `getProviders`
 
 #### `pages/Login.jsx` — Sign-In Page
 
@@ -684,7 +690,7 @@ Contains six sections:
 3. **Documents list** — filename, file size, delete button on hover. **Rejects files over 50 MB** with toast error before uploading
 4. **Vector DB status** — green badge (vectors stored) or amber badge (empty)
 5. **Ingest button** — triggers POST `/api/rag/ingest`
-6. **Settings** — LLM model dropdown, chunk size slider (200–2000), overlap slider (0–500), top-K slider (1–10)
+6. **Settings** — LLM provider dropdown (OpenRouter / Ollama), LLM model dropdown (populated from selected provider), chunk size slider (200–2000), overlap slider (0–500), top-K slider (1–10). Shows provider status badge (API key set / Ollama online).
 
 #### `components/ChatPanel.jsx` — Chat Interface
 
@@ -724,7 +730,16 @@ PROMPT_TEMPLATE = CONVERSATIONAL_PROMPT
 
 ## Configuration & Customization
 
-### Available LLM Models (all free via OpenRouter)
+### LLM Providers
+
+| Provider | Type | Key Required | Notes |
+|----------|------|-------------|-------|
+| **OpenRouter** | Cloud | `OPENROUTER_API_KEY` | Free models available — no credit card needed |
+| **Ollama** | Local | None | Install from [ollama.com](https://ollama.com), no internet required |
+
+Switch providers using the **LLM Provider** dropdown in the sidebar.
+
+### Available OpenRouter Models (all free)
 
 | Model | ID | Best For |
 |-------|----|----------|
@@ -733,7 +748,18 @@ PROMPT_TEMPLATE = CONVERSATIONAL_PROMPT
 | GPT-OSS-120B | `openai/gpt-oss-120b:free` | Strong reasoning |
 | Trinity-Mini | `arcee-ai/trinity-mini:free` | Efficient + long context |
 
-Switch models in the sidebar dropdown — no code changes needed.
+### Available Ollama Models (local)
+
+First install Ollama from [https://ollama.com](https://ollama.com), then pull a model:
+
+```bash
+ollama pull llama3.2   # recommended (3B, fast)
+ollama pull llama3.1   # 8B, balanced
+ollama pull mistral    # Mistral 7B
+ollama pull phi3       # Microsoft Phi-3
+```
+
+Once Ollama is running (`ollama serve`), select **Ollama (Local)** in the sidebar — available models are listed automatically.
 
 ### Chunking Settings
 
@@ -779,6 +805,13 @@ Make sure the FastAPI backend is running on port 8000. The CORS middleware allow
 ### `OPENROUTER_API_KEY not set`
 
 Ensure `.env` exists in the project root with your key. Restart the backend after editing `.env`.
+
+### Ollama not showing in sidebar / showing offline
+
+1. Install Ollama from [https://ollama.com](https://ollama.com)
+2. Start the server: `ollama serve` (or it starts automatically on Windows)
+3. Pull at least one model: `ollama pull llama3.2`
+4. The sidebar will show **Ollama (Local)** as available with your pulled models listed
 
 ### OCR checkbox not showing in sidebar
 
@@ -833,7 +866,7 @@ The command-line interface is still available:
 python app.py
 ```
 
-Commands: `ingest`, `query`, `exit`. Uses the shared `data/` folder and `vectordb/`.
+Select provider at startup: `1` for OpenRouter, `2` for Ollama. Commands: `ingest`, `query`, `exit`. Uses the shared `data/` folder and `vectordb/`.
 
 ---
 

@@ -27,12 +27,17 @@ class RAGPipeline:
         rag.ingest()          # A → B → C → D (Data Preparation)
         rag.setup_qa()        # Set up retriever + LLM
         answer = rag.query("What is...?")  # 1 → 2 → 3 → 4 → 5
+
+    Providers:
+        provider='openrouter'  → Cloud LLM via OpenRouter (default)
+        provider='ollama'      → Local LLM via Ollama
     """
 
-    def __init__(self, data_path="./data", vectordb_path="./storage/shared_vectors", llm_model="z-ai/glm-4.5-air:free"):
+    def __init__(self, data_path="./data", vectordb_path="./storage/shared_vectors", llm_model="z-ai/glm-4.5-air:free", provider="openrouter"):
         self.data_path = data_path
         self.vectordb_path = vectordb_path
         self.llm_model = llm_model
+        self.provider = provider
 
         # Components
         self.embeddings = None
@@ -108,7 +113,7 @@ class RAGPipeline:
         self.retriever = get_retriever(self.vectordb, top_k=top_k)
 
         # Create LLM (handles steps 4, 5)
-        self.llm = get_llm(self.llm_model)
+        self.llm = get_llm(self.llm_model, provider=self.provider)
 
         # Create full RAG chain
         self.rag_chain = create_rag_chain(self.llm, self.retriever)

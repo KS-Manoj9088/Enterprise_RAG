@@ -13,7 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 
-export default function ChatPanel({ stats, model, topK, documents }) {
+export default function ChatPanel({ stats, model, provider, topK, documents }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -38,7 +38,7 @@ export default function ChatPanel({ stats, model, topK, documents }) {
     setLoading(true)
 
     try {
-      const res = await queryRag(question, topK, model)
+      const res = await queryRag(question, topK, model, provider)
       setMessages((prev) => [
         ...prev,
         {
@@ -50,10 +50,22 @@ export default function ChatPanel({ stats, model, topK, documents }) {
       ])
     } catch (err) {
       const detail = err.response?.data?.detail || 'Query failed'
-      toast.error(detail)
+      const status = err.response?.status
+      // Friendly toast based on error type
+      let toastMsg
+      if (status === 429) {
+        toastMsg = '⏳ Quota exhausted — switch to OpenRouter or wait for reset'
+      } else if (status === 400 && detail.toLowerCase().includes('authentication')) {
+        toastMsg = '🔑 API key invalid — check your .env file'
+      } else if (status === 400 && detail.toLowerCase().includes('not found')) {
+        toastMsg = '⚠️ Model not found — select a different model'
+      } else {
+        toastMsg = detail.length > 120 ? detail.slice(0, 117) + '...' : detail
+      }
+      toast.error(toastMsg, { duration: 6000 })
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: `Error: ${detail}`, error: true },
+        { role: 'assistant', content: `❌ ${detail}`, error: true },
       ])
     }
     setLoading(false)
@@ -82,7 +94,11 @@ export default function ChatPanel({ stats, model, topK, documents }) {
         <StatBadge label="Top-K" value={topK} color="purple" />
         <div className="ml-auto flex items-center gap-1.5 text-[11px] text-slate-400">
           <Sparkles size={12} />
-          <span className="hidden sm:inline">{model.split('/')[1]?.replace(':free', '')}</span>
+          <span className="hidden sm:inline">
+            {provider === 'ollama'
+              ? `${model} (Local)`
+              : model.split('/')[1]?.replace(':free', '')}
+          </span>
         </div>
       </div>
 

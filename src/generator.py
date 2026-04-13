@@ -3,25 +3,35 @@
 Steps 4, 5: LLM → Response
 ========================================
 Sends relevant data + query to LLM and generates response.
-Uses OpenRouter API (FREE models available) - needs API key from https://openrouter.ai/keys
 
-Supported FREE models (change in app.py):
+Supports TWO providers:
+  1. OpenRouter API (cloud, FREE models) — needs OPENROUTER_API_KEY
+  2. Ollama (local) — needs Ollama installed from https://ollama.com
+
+Supported FREE OpenRouter models:
   - z-ai/glm-4.5-air:free       → BEST BALANCE (agents + chat)
   - stepfun/step-3.5-flash:free  → fast + good reasoning
   - openai/gpt-oss-120b:free     → strong reasoning
   - arcee-ai/trinity-mini:free   → efficient + long context
+
+Supported Ollama models (pull with `ollama pull <model>`):
+  - llama3.2  → Meta Llama 3.2 (3B, fast)
+  - llama3.1  → Meta Llama 3.1 (8B, balanced)
+  - mistral   → Mistral 7B
+  - phi3      → Microsoft Phi-3
+  - gemma2    → Google Gemma 2
+
 """
 import os
-import time
+import httpx
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from openai import RateLimitError
 
-# Load .env file automatically
-load_dotenv()
+# Load .env file automatically (override=True picks up key changes)
+load_dotenv(override=True)
 
 # Import strict prompt from prompts folder
 from prompts.strict.strict_qa import STRICT_PROMPT
@@ -40,18 +50,50 @@ from prompts.strict.strict_qa import STRICT_PROMPT
 #   from prompts.domain.legal import LEGAL_PROMPT
 PROMPT_TEMPLATE = STRICT_PROMPT
 
+# ── Default Ollama models (shown even if Ollama is offline) ──
+DEFAULT_OLLAMA_MODELS = [
+    "llama3.2",
+    "llama3.1",
+    "mistral",
+    "phi3",
+    "gemma2",
+]
 
-def get_llm(model_name="z-ai/glm-4.5-air:free", temperature=0.3):
+
+def get_ollama_base_url() -> str:
+    """Return the Ollama server base URL (configurable via env var)."""
+    return os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+
+def is_ollama_available() -> bool:
+    """Check if Ollama server is running and reachable."""
+    try:
+        resp = httpx.get(f"{get_ollama_base_url()}/api/tags", timeout=3)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def list_ollama_models() -> list[str]:
+    """
+    Fetch the list of locally-available Ollama models.
+
+    Returns:
+        List of model name strings, e.g. ['llama3.2', 'mistral']
+    """
+    try:
+        resp = httpx.get(f"{get_ollama_base_url()}/api/tags", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        pass
+    return []
+
+
+def get_openrouter_llm(model_name: str = "z-ai/glm-4.5-air:free", temperature: float = 0.3):
     """
     Load the LLM using OpenRouter API (FREE models).
-
-    Architecture Mapping:
-        4 → LLM(s) - Large Language Model (via OpenRouter cloud)
-
-    Prerequisites:
-        1. Sign up at https://openrouter.ai (free)
-        2. Get API key from https://openrouter.ai/keys
-        3. Set environment variable: OPENROUTER_API_KEY=sk-or-...
 
     Args:
         model_name: OpenRouter model name
@@ -76,6 +118,61 @@ def get_llm(model_name="z-ai/glm-4.5-air:free", temperature=0.3):
     )
     print(f"[4] LLM loaded: {model_name} (via OpenRouter, temperature={temperature})")
     return llm
+
+
+def get_ollama_llm(model_name: str = "llama3.2", temperature: float = 0.3):
+    """
+    Load the LLM using a locally-running Ollama server.
+
+    Prerequisites:
+        1. Install Ollama: https://ollama.com
+        2. Pull a model: ollama pull llama3.2
+        3. Ollama server must be running (starts automatically after install)
+
+    Args:
+        model_name: Ollama model name (e.g. 'llama3.2', 'mistral')
+        temperature: Creativity (0=focused, 1=creative)
+
+    Returns:
+        ChatOllama instance
+    """
+    from langchain_ollama import ChatOllama
+
+    base_url = get_ollama_base_url()
+
+    if not is_ollama_available():
+        raise ValueError(
+            f"Ollama server is not reachable at {base_url}!\n"
+            "1. Install Ollama from: https://ollama.com\n"
+            "2. Make sure the Ollama service is running.\n"
+            f"3. Verify with: curl {base_url}/api/tags\n"
+        )
+
+    llm = ChatOllama(
+        model=model_name,
+        temperature=temperature,
+        base_url=base_url,
+    )
+    print(f"[4] LLM loaded: {model_name} (via Ollama @ {base_url}, temperature={temperature})")
+    return llm
+
+
+def get_llm(model_name="z-ai/glm-4.5-air:free", temperature=0.3, provider="openrouter"):
+    """
+    Load the LLM from the selected provider.
+
+    Args:
+        model_name: Model identifier for the chosen provider
+        temperature: Creativity (0=focused, 1=creative)
+        provider: 'openrouter' | 'ollama'
+
+    Returns:
+        LangChain chat model instance
+    """
+    if provider == "ollama":
+        return get_ollama_llm(model_name, temperature)
+    else:
+        return get_openrouter_llm(model_name, temperature)
 
 
 def format_docs(docs):
@@ -131,18 +228,7 @@ def generate_response(rag_chain, query: str, retriever=None):
     print(f"\n{'='*60}")
     print(f"[1] Query: {query}")
 
-    # Retry with exponential backoff on rate limit errors
-    max_retries = 4
-    for attempt in range(max_retries):
-        try:
-            answer = rag_chain.invoke(query)
-            break
-        except RateLimitError as e:
-            if attempt == max_retries - 1:
-                raise
-            wait = 2 ** attempt * 5  # 5s, 10s, 20s, 40s
-            print(f"[!] Rate limited. Retrying in {wait}s... (attempt {attempt + 1}/{max_retries})")
-            time.sleep(wait)
+    answer = rag_chain.invoke(query)
 
     # Fetch source docs separately if retriever is provided
     sources = retriever.invoke(query) if retriever else []

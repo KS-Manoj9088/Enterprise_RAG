@@ -49,17 +49,21 @@ export const listDocuments = () => api.get('/api/documents/')
 export const deleteDocument = (docId) => api.delete(`/api/documents/${docId}`)
 
 // ── RAG ──
-export const ingestDocuments = (chunkSize = 1000, chunkOverlap = 100, model = 'z-ai/glm-4.5-air:free') =>
+export const ingestDocuments = (chunkSize = 1000, chunkOverlap = 100, model = 'z-ai/glm-4.5-air:free', provider = 'openrouter') =>
   api.post('/api/rag/ingest', {
     chunk_size: chunkSize,
     chunk_overlap: chunkOverlap,
     model,
+    provider,
   })
 
-export const queryRag = (question, topK = 3, model = 'z-ai/glm-4.5-air:free') =>
-  api.post('/api/rag/query', { question, top_k: topK, model })
+export const queryRag = (question, topK = 3, model = 'z-ai/glm-4.5-air:free', provider = 'openrouter') =>
+  api.post('/api/rag/query', { question, top_k: topK, model, provider })
 
 export const getRagStats = () => api.get('/api/rag/stats')
+
+// ── LLM Providers ──
+export const getProviders = () => api.get('/api/rag/providers')
 
 // ── OCR ──
 export const getOcrStatus = () => api.get('/api/ocr/status')

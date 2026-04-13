@@ -10,9 +10,16 @@ Main entry point that implements the EXACT architecture:
   QUERY TIME (run many times):
     1 (Query) → 2 (Embed Query) → 3 (Retrieve) → 4 (LLM) → 5 (Response)
 
-HOW TO USE:
+HOW TO USE (Ollama — Local):
   1. Install Ollama: https://ollama.com
   2. Pull a model: ollama pull llama3.2
+  3. pip install -r requirements.txt
+  4. Put PDF/TXT files in ./data/ folder
+  5. python app.py
+
+HOW TO USE (OpenRouter — Cloud):
+  1. Get API key: https://openrouter.ai/keys
+  2. Set env: OPENROUTER_API_KEY=sk-or-...
   3. pip install -r requirements.txt
   4. Put PDF/TXT files in ./data/ folder
   5. python app.py
@@ -55,21 +62,51 @@ def main():
     print_banner()
 
     # ──────────────────────────────────────────
-    # CONFIGURE YOUR MODEL HERE (OpenRouter FREE models)
-    # Options:
-    #   z-ai/glm-4.5-air:free       → BEST BALANCE
-    #   stepfun/step-3.5-flash:free  → fast + good reasoning
-    #   openai/gpt-oss-120b:free     → strong reasoning
-    #   arcee-ai/trinity-mini:free   → efficient + long context
+    # CHOOSE YOUR PROVIDER
     # ──────────────────────────────────────────
-    LLM_MODEL = "z-ai/glm-4.5-air:free"
+    from src.generator import is_ollama_available, list_ollama_models
+
+    print("    Select LLM Provider:")
+    print("      1. OpenRouter (cloud — free API key needed)")
+    print("      2. Ollama     (local — no internet needed)")
+    provider_choice = input("\n    Provider [1/2] (default=1): ").strip()
+
+    if provider_choice == "2":
+        LLM_PROVIDER = "ollama"
+        if is_ollama_available():
+            models = list_ollama_models()
+            if models:
+                print(f"\n    Available Ollama models: {', '.join(models)}")
+                model_input = input(
+                    f"    Model (default={models[0]}): "
+                ).strip()
+                LLM_MODEL = model_input if model_input else models[0]
+            else:
+                print("\n    [!] No models found. Run: ollama pull llama3.2")
+                LLM_MODEL = (
+                    input("    Model name (default=llama3.2): ").strip()
+                    or "llama3.2"
+                )
+        else:
+            print("\n    [!] Ollama is not running. Start it first!")
+            print("        Install from: https://ollama.com")
+            LLM_MODEL = "llama3.2"
+    else:
+        LLM_PROVIDER = "openrouter"
+        or_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not or_key:
+            print("\n    [!] OPENROUTER_API_KEY is not set.")
+            print("        Get free key: https://openrouter.ai/keys")
+        LLM_MODEL = "z-ai/glm-4.5-air:free"
 
     rag = RAGPipeline(
         data_path="./data",
         vectordb_path="./storage/shared_vectors",
-        llm_model=LLM_MODEL
+        llm_model=LLM_MODEL,
+        provider=LLM_PROVIDER,
     )
 
+    print(f"\n    Provider: {LLM_PROVIDER}")
     print(f"    LLM Model: {LLM_MODEL}")
     print(f"    Data Path: {os.path.abspath('./data')}")
     print(f"    VectorDB:  {os.path.abspath('./storage/shared_vectors')}")

@@ -8,7 +8,6 @@ import {
   Settings,
   RefreshCw,
   ScanLine,
-  ChevronDown,
   File,
 } from 'lucide-react'
 import {
@@ -17,14 +16,23 @@ import {
   ingestDocuments,
 } from '../api'
 
-const MODELS = {
-  'z-ai/glm-4.5-air:free': 'GLM-4.5-Air (Best Balance)',
-  'stepfun/step-3.5-flash:free': 'Step-3.5-Flash (Fast)',
-  'openai/gpt-oss-120b:free': 'GPT-OSS-120B (Strong)',
-  'arcee-ai/trinity-mini:free': 'Trinity-Mini (Efficient)',
+const MAX_SIZE = 50 * 1024 * 1024 // 50 MB
+
+// Fallback models when the API hasn't loaded yet
+const FALLBACK_MODELS = {
+  openrouter: {
+    'z-ai/glm-4.5-air:free': 'GLM-4.5-Air (Best Balance)',
+    'stepfun/step-3.5-flash:free': 'Step-3.5-Flash (Fast)',
+    'openai/gpt-oss-120b:free': 'GPT-OSS-120B (Strong)',
+    'arcee-ai/trinity-mini:free': 'Trinity-Mini (Efficient)',
+  },
+  ollama: {},
 }
 
-const MAX_SIZE = 50 * 1024 * 1024 // 50 MB
+const DEFAULT_MODEL = {
+  openrouter: 'z-ai/glm-4.5-air:free',
+  ollama: 'llama3.2',
+}
 
 export default function Sidebar({
   documents,
@@ -32,6 +40,9 @@ export default function Sidebar({
   ocrAvailable,
   model,
   setModel,
+  provider,
+  setProvider,
+  providersData,
   chunkSize,
   setChunkSize,
   chunkOverlap,
@@ -86,7 +97,7 @@ export default function Sidebar({
     }
     setIngesting(true)
     try {
-      const res = await ingestDocuments(chunkSize, chunkOverlap, model)
+      const res = await ingestDocuments(chunkSize, chunkOverlap, model, provider)
       toast.success(`Ingested: ${res.data.chunks_created} chunks → ${res.data.vectors_stored} vectors`)
       onRefresh()
     } catch (err) {
@@ -214,20 +225,93 @@ export default function Sidebar({
           <Settings size={12} /> Settings
         </h3>
 
+        {/* Provider */}
+        <label className="block mb-3">
+          <span className="text-[11px] font-medium text-slate-500">LLM Provider</span>
+          <select
+            value={provider}
+            onChange={(e) => {
+              const newProvider = e.target.value
+              setProvider(newProvider)
+              // Reset to first model of new provider
+              const prov = providersData.find((p) => p.id === newProvider)
+              const models = Object.keys(prov?.models || FALLBACK_MODELS[newProvider] || {})
+              setModel(models[0] || DEFAULT_MODEL[newProvider] || '')
+            }}
+            className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:ring-1 focus:ring-brand-200 outline-none"
+          >
+            {providersData.length > 0
+              ? providersData.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))
+              : (
+                <>
+                  <option value="openrouter">OpenRouter (Cloud)</option>
+                  <option value="ollama">Ollama (Local)</option>
+                </>
+              )}
+          </select>
+        </label>
+
+        {/* Provider status banner */}
+        {(() => {
+          const prov = providersData.find((p) => p.id === provider)
+          if (!prov) return null
+          if (provider === 'ollama') {
+            return (
+              <div className={`mb-3 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold flex items-center gap-1.5 ${
+                prov.available
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-red-50 text-red-600 border border-red-200'
+              }`}>
+                {prov.available ? '● Ollama connected' : '● Ollama offline — start it first'}
+              </div>
+            )
+          }
+          if (prov.requires_key) {
+            return (
+              <div className={`mb-3 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold flex items-center gap-1.5 ${
+                prov.key_set
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+              }`}>
+                {prov.key_set
+                  ? `● API key set`
+                  : `⚠ Set ${prov.key_env} in .env`}
+              </div>
+            )
+          }
+          return null
+        })()}
+
         {/* Model */}
         <label className="block mb-3">
           <span className="text-[11px] font-medium text-slate-500">LLM Model</span>
-          <select
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:ring-1 focus:ring-brand-200 outline-none"
-          >
-            {Object.entries(MODELS).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
+          {(() => {
+            const prov = providersData.find((p) => p.id === provider)
+            const models = prov?.models
+              ? Object.entries(prov.models)
+              : Object.entries(FALLBACK_MODELS[provider] || {})
+            const disabled = provider === 'ollama' && (!prov?.available || models.length === 0)
+            return (
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                disabled={disabled}
+                className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:ring-1 focus:ring-brand-200 outline-none disabled:opacity-50"
+              >
+                {models.length > 0 ? (
+                  models.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))
+                ) : (
+                  <option value="">No models — run: ollama pull llama3.2</option>
+                )}
+              </select>
+            )
+          })()}
         </label>
 
         {/* Chunk size */}
@@ -285,9 +369,9 @@ export default function Sidebar({
       {/* Footer */}
       <div className="p-4 border-t border-slate-100 mt-auto">
         <p className="text-[10px] text-slate-400 text-center">
-          LangChain · ChromaDB · OpenRouter
+          LangChain · ChromaDB
           <br />
-          100% Free — No GPU Required
+          OpenRouter · Ollama
         </p>
       </div>
     </aside>

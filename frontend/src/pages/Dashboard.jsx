@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { getRagStats, listDocuments, getOcrStatus } from '../api'
+import { getRagStats, listDocuments, getOcrStatus, getProviders } from '../api'
 import Navbar from '../components/Navbar'
 import Sidebar from '../components/Sidebar'
 import ChatPanel from '../components/ChatPanel'
@@ -11,21 +11,25 @@ export default function Dashboard() {
   const [stats, setStats] = useState({ vectors: 0, exists: false })
   const [ocrAvailable, setOcrAvailable] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [provider, setProvider] = useState('openrouter')
   const [model, setModel] = useState('z-ai/glm-4.5-air:free')
+  const [providersData, setProvidersData] = useState([])
   const [chunkSize, setChunkSize] = useState(1000)
   const [chunkOverlap, setChunkOverlap] = useState(100)
   const [topK, setTopK] = useState(3)
 
   const refresh = async () => {
     try {
-      const [docsRes, statsRes, ocrRes] = await Promise.all([
+      const [docsRes, statsRes, ocrRes, provRes] = await Promise.all([
         listDocuments(),
         getRagStats(),
         getOcrStatus(),
+        getProviders(),
       ])
       setDocuments(docsRes.data)
       setStats(statsRes.data)
       setOcrAvailable(ocrRes.data.available)
+      setProvidersData(provRes.data.providers || [])
     } catch (err) {
       console.error('Failed to refresh:', err)
     }
@@ -52,6 +56,9 @@ export default function Dashboard() {
             ocrAvailable={ocrAvailable}
             model={model}
             setModel={setModel}
+            provider={provider}
+            setProvider={setProvider}
+            providersData={providersData}
             chunkSize={chunkSize}
             setChunkSize={setChunkSize}
             chunkOverlap={chunkOverlap}
@@ -66,6 +73,7 @@ export default function Dashboard() {
         <ChatPanel
           stats={stats}
           model={model}
+          provider={provider}
           topK={topK}
           documents={documents}
         />
