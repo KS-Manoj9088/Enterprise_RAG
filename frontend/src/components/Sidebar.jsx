@@ -49,6 +49,8 @@ export default function Sidebar({
   setChunkOverlap,
   topK,
   setTopK,
+  promptStyle,
+  setPromptStyle,
   onRefresh,
 }) {
   const fileInputRef = useRef(null)
@@ -112,7 +114,7 @@ export default function Sidebar({
   }
 
   return (
-    <aside className="w-72 bg-white border-r border-slate-200 flex flex-col overflow-y-auto shrink-0">
+    <aside className="w-80 bg-white border-r border-slate-200 flex flex-col overflow-y-auto shrink-0">
       {/* Upload */}
       <div className="p-4 border-b border-slate-100">
         <input
@@ -154,32 +156,35 @@ export default function Sidebar({
       </div>
 
       {/* Documents */}
-      <div className="p-4 border-b border-slate-100 flex-1 min-h-0 overflow-y-auto">
+      <div className="p-4 border-b border-slate-100">
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
           <FileText size={12} /> Documents ({documents.length})
         </h3>
         {documents.length === 0 ? (
           <p className="text-xs text-slate-400 italic">No documents uploaded yet</p>
         ) : (
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
             {documents.map((doc) => (
               <div
                 key={doc.id}
-                className="group flex items-center gap-2 px-2.5 py-2 rounded-lg hover:bg-slate-50 transition"
+                className="group flex items-start gap-2 px-2.5 py-2 rounded-lg hover:bg-slate-50 transition"
               >
-                <File size={14} className="text-slate-400 shrink-0" />
+                <File size={14} className="text-slate-400 shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-slate-700 truncate">
+                  <p
+                    className="text-xs font-medium text-slate-700 break-all leading-snug"
+                    title={doc.filename}
+                  >
                     {doc.filename}
                   </p>
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-[10px] text-slate-400 mt-0.5">
                     {formatSize(doc.size_bytes)}
                     {doc.ocr_used && ' · OCR'}
                   </p>
                 </div>
                 <button
                   onClick={() => handleDelete(doc.id, doc.filename)}
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-500 transition"
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-500 transition shrink-0"
                 >
                   <Trash2 size={12} />
                 </button>
@@ -349,7 +354,7 @@ export default function Sidebar({
         </label>
 
         {/* Top-K */}
-        <label className="block">
+        <label className="block mb-3">
           <div className="flex justify-between">
             <span className="text-[11px] font-medium text-slate-500">Top-K</span>
             <span className="text-[11px] text-brand-600 font-semibold">{topK}</span>
@@ -363,6 +368,19 @@ export default function Sidebar({
             onChange={(e) => setTopK(+e.target.value)}
             className="mt-1 w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-brand-600"
           />
+        </label>
+
+        {/* Response Style */}
+        <label className="block">
+          <span className="text-[11px] font-medium text-slate-500">Response Style</span>
+          <select
+            value={promptStyle}
+            onChange={(e) => setPromptStyle(e.target.value)}
+            className="mt-1 block w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 focus:border-brand-400 focus:ring-1 focus:ring-brand-200 outline-none"
+          >
+            <option value="strict">Strict Q&amp;A</option>
+            <option value="general">General</option>
+          </select>
         </label>
       </div>
 

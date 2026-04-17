@@ -13,7 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 
-export default function ChatPanel({ stats, model, provider, topK, documents }) {
+export default function ChatPanel({ stats, model, provider, topK, promptStyle, documents }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -38,7 +38,7 @@ export default function ChatPanel({ stats, model, provider, topK, documents }) {
     setLoading(true)
 
     try {
-      const res = await queryRag(question, topK, model, provider)
+      const res = await queryRag(question, topK, model, provider, promptStyle)
       setMessages((prev) => [
         ...prev,
         {
@@ -92,6 +92,11 @@ export default function ChatPanel({ stats, model, provider, topK, documents }) {
         <StatBadge label="Documents" value={documents.length} color="emerald" />
         <StatBadge label="Vectors" value={stats.vectors} color="blue" />
         <StatBadge label="Top-K" value={topK} color="purple" />
+        <StatBadge
+          label="Style"
+          value={promptStyle === 'auto' ? 'auto' : promptStyle.replace('_', ' ')}
+          color="amber"
+        />
         <div className="ml-auto flex items-center gap-1.5 text-[11px] text-slate-400">
           <Sparkles size={12} />
           <span className="hidden sm:inline">

@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [chunkSize, setChunkSize] = useState(1000)
   const [chunkOverlap, setChunkOverlap] = useState(100)
   const [topK, setTopK] = useState(3)
+  const [promptStyle, setPromptStyle] = useState('strict')
 
   const refresh = async () => {
     try {
@@ -65,6 +66,8 @@ export default function Dashboard() {
             setChunkOverlap={setChunkOverlap}
             topK={topK}
             setTopK={setTopK}
+            promptStyle={promptStyle}
+            setPromptStyle={setPromptStyle}
             onRefresh={refresh}
           />
         )}
@@ -75,6 +78,7 @@ export default function Dashboard() {
           model={model}
           provider={provider}
           topK={topK}
+          promptStyle={promptStyle}
           documents={documents}
         />
       </div>

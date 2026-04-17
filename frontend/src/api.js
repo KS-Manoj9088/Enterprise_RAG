@@ -57,8 +57,8 @@ export const ingestDocuments = (chunkSize = 1000, chunkOverlap = 100, model = 'z
     provider,
   })
 
-export const queryRag = (question, topK = 3, model = 'z-ai/glm-4.5-air:free', provider = 'openrouter') =>
-  api.post('/api/rag/query', { question, top_k: topK, model, provider })
+export const queryRag = (question, topK = 3, model = 'z-ai/glm-4.5-air:free', provider = 'openrouter', promptStyle = 'auto') =>
+  api.post('/api/rag/query', { question, top_k: topK, model, provider, prompt_style: promptStyle })
 
 export const getRagStats = () => api.get('/api/rag/stats')
 

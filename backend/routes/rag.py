@@ -16,12 +16,74 @@ from src.loader import load_documents
 from src.chunker import chunk_documents
 from src.embedder import get_embedding_model, store_in_vectordb, load_vectordb
 from src.retriever import get_retriever
-from src.generator import get_llm, create_rag_chain, generate_response, is_ollama_available, list_ollama_models
+from src.generator import get_llm, create_rag_chain, generate_response, direct_generate, is_ollama_available, list_ollama_models
+from prompts.analytical.summarizer import SUMMARY_PROMPT
+from prompts.analytical.comparison import COMPARISON_PROMPT
+from prompts.analytical.step_by_step import STEP_BY_STEP_PROMPT
+from prompts.conversational.friendly import CONVERSATIONAL_PROMPT
+from prompts.conversational.eli5 import ELI5_PROMPT
+from prompts.domain.technical import TECHNICAL_PROMPT
+from prompts.domain.academic import ACADEMIC_PROMPT
+from prompts.domain.legal import LEGAL_PROMPT
+from prompts.strict.strict_qa import STRICT_PROMPT
+from prompts.strict.strict_cited import STRICT_CITED_PROMPT
+
+# ── Prompt style registry ──
+PROMPT_STYLES: dict[str, str] = {
+    "auto":         STRICT_PROMPT,          # overridden at query time
+    "strict":       STRICT_PROMPT,
+    "strict_cited": STRICT_CITED_PROMPT,
+    "general":      CONVERSATIONAL_PROMPT,
+    "summary":      SUMMARY_PROMPT,
+    "conversational": CONVERSATIONAL_PROMPT,
+    "eli5":         ELI5_PROMPT,
+    "technical":    TECHNICAL_PROMPT,
+    "academic":     ACADEMIC_PROMPT,
+    "legal":        LEGAL_PROMPT,
+    "comparison":   COMPARISON_PROMPT,
+    "step_by_step": STEP_BY_STEP_PROMPT,
+}
 
 router = APIRouter(prefix="/api/rag", tags=["rag"])
 
 # ── In-memory cache for per-user pipelines ──
 _user_pipelines: dict = {}
+
+# ── Summary query detection ──
+_SUMMARY_KEYWORDS = (
+    "summarize", "summarise", "summary", "give a summary",
+    "summarization", "brief summary",
+    "give me a summary", "give an overview",
+    "give me an overview", "give a brief",
+    "what are the main points", "what are the key points",
+    "what is the document about", "what is this document about",
+    "overview of", "summarize the", "summarise the",
+)
+_SUMMARY_TOP_K = 15  # retrieve more chunks for summarization
+
+# Broad retrieval query used when user asks for a summary.
+# This spans many topics and retrieves diverse chunks across the whole document
+# instead of trying to match the literal "give a summary about file.pdf" query.
+_SUMMARY_RETRIEVAL_QUERY = (
+    "introduction overview key concepts main topics important ideas "
+    "definitions background theory methods results conclusion"
+)
+
+
+def _is_summary_query(question: str) -> bool:
+    """Return True if the question looks like a summarization request."""
+    q = question.lower()
+    return any(kw in q for kw in _SUMMARY_KEYWORDS)
+
+
+def _extract_filename(question: str) -> str | None:
+    """
+    Try to extract a filename mentioned in the question.
+    E.g. "give a summary about ai_complete_reference.pdf" → "ai_complete_reference.pdf"
+    """
+    import re
+    match = re.search(r'[\w\-_]+\.(?:pdf|txt|docx)', question, re.IGNORECASE)
+    return match.group(0).lower() if match else None
 
 
 def get_user_vectordb_path(user_id: str) -> str:
@@ -43,6 +105,7 @@ class QueryRequest(BaseModel):
     top_k: int = 3
     model: str = "z-ai/glm-4.5-air:free"
     provider: str = "openrouter"  # 'openrouter' or 'ollama'
+    prompt_style: str = "auto"    # 'auto' | 'strict' | 'strict_cited' | 'summary' | 'conversational' | 'eli5' | 'technical' | 'academic' | 'legal' | 'comparison' | 'step_by_step'
 
 
 class IngestResponse(BaseModel):
@@ -132,24 +195,47 @@ def query_rag(
 
     start = time.time()
 
+    # ── Resolve effective prompt style ──
+    style = body.prompt_style if body.prompt_style in PROMPT_STYLES else "strict"
+    if style == "auto":
+        style = "summary" if _is_summary_query(body.question) else "strict"
+    elif style == "general" and _is_summary_query(body.question):
+        # General mode silently promotes to summary when user asks for one
+        style = "summary"
+    elif style == "strict" and _is_summary_query(body.question):
+        # Strict mode blocks summary requests
+        return {
+            "answer": (
+                "⚠️ **Strict Q&A mode does not produce summaries.**\n\n"
+                "Switch **Response Style → General** in the sidebar to get a summary."
+            ),
+            "sources": [],
+            "time_seconds": 0.0,
+        }
+    chosen_prompt = PROMPT_STYLES[style]
+
+    # Summary-mode needs more chunks to cover the whole document
+    is_summary_mode = style == "summary"
+    effective_top_k = _SUMMARY_TOP_K if is_summary_mode else body.top_k
+
     cache_key = user.id
     pipeline = _user_pipelines.get(cache_key)
 
-    # Rebuild the pipeline if model, provider, or top_k changed
+    # Rebuild the cached pipeline if model, provider, or top_k changed
     needs_rebuild = (
         pipeline is None
         or pipeline.get("model") != body.model
         or pipeline.get("provider") != body.provider
-        or pipeline.get("top_k") != body.top_k
+        or pipeline.get("top_k") != effective_top_k
     )
 
     if needs_rebuild:
         try:
             embeddings = get_embedding_model()
             vectordb = load_vectordb(embeddings, vectordb_path)
-            retriever = get_retriever(vectordb, top_k=body.top_k)
+            retriever = get_retriever(vectordb, top_k=effective_top_k)
             llm = get_llm(body.model, provider=body.provider)
-            rag_chain = create_rag_chain(llm, retriever)
+            rag_chain = create_rag_chain(llm, retriever, prompt_template=chosen_prompt)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
@@ -158,71 +244,104 @@ def query_rag(
         pipeline = {
             "model": body.model,
             "provider": body.provider,
-            "top_k": body.top_k,
+            "top_k": effective_top_k,
             "retriever": retriever,
             "rag_chain": rag_chain,
             "vectordb": vectordb,
         }
         _user_pipelines[cache_key] = pipeline
 
-    try:
-        answer, sources = generate_response(
-            pipeline["rag_chain"], body.question, pipeline["retriever"]
-        )
-    except Exception as exc:
-        # Log the full traceback to the terminal for debugging
-        print(f"\n[RAG ERROR] provider={body.provider} model={body.model}")
-        traceback.print_exc()
-
-        # Evict the broken pipeline so the next request forces a full rebuild
-        _user_pipelines.pop(cache_key, None)
-
-        err_str = str(exc).lower()
-
-        # --- Quota / rate-limit errors (429) ---
-        is_quota = "429" in str(exc) or "resource_exhausted" in err_str or "quota" in err_str or "rate" in err_str
-        if is_quota:
-            prov = body.provider
-            if prov == "openrouter":
-                detail = (
-                    f"OpenRouter rate limit hit for model '{body.model}': {exc}. "
-                    "Try a different free model, or wait a moment and retry."
-                )
-            else:
-                detail = f"Rate limit exceeded: {exc}"
-            raise HTTPException(status_code=429, detail=detail)
-
-        # --- Authentication errors ---
-        is_auth = (
-            "401" in str(exc)
-            or "authentication" in err_str
-            or "user not found" in err_str
-            or "api key" in err_str
-            or "unauthorized" in err_str
-        )
-        if is_auth:
-            prov = body.provider
-            if prov == "openrouter":
-                detail = (
-                    f"OpenRouter authentication failed: {exc}. "
-                    "Make sure OPENROUTER_API_KEY in your .env is valid. "
-                    "Get a free key at https://openrouter.ai/keys"
-                )
-            else:
-                detail = f"Authentication error: {exc}"
-            # Use 400 (not 401) — 401 triggers frontend logout redirect
-            raise HTTPException(status_code=400, detail=detail)
-
-        # --- Not found (model removed/invalid) ---
-        is_not_found = "404" in str(exc) or "not_found" in err_str or "not found" in err_str
-        if is_not_found:
-            detail = (
-                f"Model '{body.model}' not found for provider '{body.provider}'. "
-                "It may have been removed or renamed. Please select a different model."
+    # ── For summary mode: use direct_generate with a broad retrieval query
+    #    so the vector search finds real content instead of matching the
+    #    "give a summary about file.pdf" sentence. ──
+    if is_summary_mode:
+        try:
+            llm = get_llm(body.model, provider=body.provider)
+            # Use MMR for diverse chunk coverage of the document
+            mmr_retriever = pipeline["vectordb"].as_retriever(
+                search_type="mmr",
+                search_kwargs={"k": effective_top_k, "fetch_k": effective_top_k * 4},
             )
-            raise HTTPException(status_code=400, detail=detail)
+            answer, sources = direct_generate(
+                llm=llm,
+                prompt_template=chosen_prompt,
+                retriever=mmr_retriever,
+                retrieval_query=_SUMMARY_RETRIEVAL_QUERY,
+                user_question=body.question,
+            )
+        except Exception as exc:
+            import traceback
+            print(f"\n[SUMMARY ERROR] provider={body.provider} model={body.model}")
+            traceback.print_exc()
+            _user_pipelines.pop(cache_key, None)
+            raise HTTPException(status_code=500, detail=f"Summary generation failed: {exc}")
 
-        raise HTTPException(status_code=500, detail=f"LLM query failed: {exc}")
+    else:
+        # Normal (non-summary) mode: rebuild chain with chosen prompt and invoke
+        try:
+            llm = get_llm(body.model, provider=body.provider)
+            active_chain = create_rag_chain(llm, pipeline["retriever"], prompt_template=chosen_prompt)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"LLM init failed: {exc}")
+
+        try:
+            answer, sources = generate_response(
+                active_chain, body.question, pipeline["retriever"]
+            )
+        except Exception as exc:
+            # Log the full traceback to the terminal for debugging
+            print(f"\n[RAG ERROR] provider={body.provider} model={body.model}")
+            traceback.print_exc()
+
+            # Evict the broken pipeline so the next request forces a full rebuild
+            _user_pipelines.pop(cache_key, None)
+
+            err_str = str(exc).lower()
+
+            # --- Quota / rate-limit errors (429) ---
+            is_quota = "429" in str(exc) or "resource_exhausted" in err_str or "quota" in err_str or "rate" in err_str
+            if is_quota:
+                prov = body.provider
+                if prov == "openrouter":
+                    detail = (
+                        f"OpenRouter rate limit hit for model '{body.model}': {exc}. "
+                        "Try a different free model, or wait a moment and retry."
+                    )
+                else:
+                    detail = f"Rate limit exceeded: {exc}"
+                raise HTTPException(status_code=429, detail=detail)
+
+            # --- Authentication errors ---
+            is_auth = (
+                "401" in str(exc)
+                or "authentication" in err_str
+                or "user not found" in err_str
+                or "api key" in err_str
+                or "unauthorized" in err_str
+            )
+            if is_auth:
+                prov = body.provider
+                if prov == "openrouter":
+                    detail = (
+                        f"OpenRouter authentication failed: {exc}. "
+                        "Make sure OPENROUTER_API_KEY in your .env is valid. "
+                        "Get a free key at https://openrouter.ai/keys"
+                    )
+                else:
+                    detail = f"Authentication error: {exc}"
+                # Use 400 (not 401) — 401 triggers frontend logout redirect
+                raise HTTPException(status_code=400, detail=detail)
+
+            # --- Not found (model removed/invalid) ---
+            is_not_found = "404" in str(exc) or "not_found" in err_str or "not found" in err_str
+            if is_not_found:
+                detail = (
+                    f"Model '{body.model}' not found for provider '{body.provider}'. "
+                    "It may have been removed or renamed. Please select a different model."
+                )
+                raise HTTPException(status_code=400, detail=detail)
+
+            raise HTTPException(status_code=500, detail=f"LLM query failed: {exc}")
 
     elapsed = time.time() - start
 

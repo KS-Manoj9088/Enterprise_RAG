@@ -180,7 +180,7 @@ def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-def create_rag_chain(llm, retriever):
+def create_rag_chain(llm, retriever, prompt_template: str | None = None):
     """
     Create the complete RAG chain connecting retriever → LLM.
 
@@ -190,12 +190,15 @@ def create_rag_chain(llm, retriever):
     Args:
         llm: Language model
         retriever: Vector database retriever
+        prompt_template: Optional override for the prompt template string.
+                         Defaults to the module-level PROMPT_TEMPLATE.
 
     Returns:
         LCEL RAG chain
     """
+    template = prompt_template if prompt_template is not None else PROMPT_TEMPLATE
     prompt = PromptTemplate(
-        template=PROMPT_TEMPLATE,
+        template=template,
         input_variables=["context", "question"]
     )
 
@@ -237,3 +240,48 @@ def generate_response(rag_chain, query: str, retriever=None):
     print(f"{'='*60}\n")
 
     return answer, sources
+
+
+def direct_generate(llm, prompt_template: str, retriever, retrieval_query: str, user_question: str):
+    """
+    Generate a response by separating the retrieval query from the LLM question.
+
+    This is essential for summarization: the vector search needs a broad query
+    (e.g. 'key topics main ideas') to retrieve content, while the LLM prompt
+    still receives the user's original question.
+
+    Args:
+        llm: Language model instance
+        prompt_template: Prompt template string with {context} and {question}
+        retriever: Vector DB retriever
+        retrieval_query: Query used ONLY for vector similarity search
+        user_question: Question shown to the LLM in the prompt
+
+    Returns:
+        Tuple of (answer_text, source_documents)
+    """
+    print(f"\n{'='*60}")
+    print(f"[1] User question : {user_question}")
+    print(f"[2] Retrieval query: {retrieval_query}")
+
+    # Step 2+3: retrieve with the broad query
+    docs = retriever.invoke(retrieval_query)
+    print(f"[3] Retrieved {len(docs)} chunks")
+
+    if not docs:
+        msg = "No relevant content was found in your documents for this question."
+        print(f"[!] {msg}")
+        return msg, []
+
+    context = format_docs(docs)
+
+    # Step 4+5: call LLM with the context and the ORIGINAL user question
+    template = prompt_template if prompt_template else PROMPT_TEMPLATE
+    prompt = PromptTemplate(template=template, input_variables=["context", "question"])
+    chain = prompt | llm | StrOutputParser()
+    answer = chain.invoke({"context": context, "question": user_question})
+
+    print(f"[5] Response generated ({len(answer)} chars, {len(docs)} sources)")
+    print(f"{'='*60}\n")
+
+    return answer, docs
