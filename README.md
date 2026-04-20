@@ -4,44 +4,6 @@ A complete, production-ready **Retrieval Augmented Generation** system with **Go
 
 **100% free** — open-source embeddings (HuggingFace) + free LLMs via OpenRouter or run models locally with Ollama.
 
-> **Note:** This project is for educational and demonstration purposes. For production use, ensure proper security hardening, environment variable management, and compliance with data privacy regulations.
-
----
-
-## Quick Start
-
-**Want to try it immediately?** Here's the fastest path:
-
-1. **Clone and install**:
-   ```bash
-   git clone https://github.com/KS-Manoj9088/Enterprise_RAG.git
-   cd Enterprise_RAG
-   python -m venv venv
-   venv\Scripts\Activate.ps1  # Windows PowerShell
-   pip install -r requirements.txt
-   ```
-
-2. **Get API keys** (5 minutes):
-   - OpenRouter: [https://openrouter.ai/keys](https://openrouter.ai/keys) (free, no credit card)
-   - Google OAuth: [https://console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials)
-
-3. **Configure** (copy `.env.example` to `.env` and fill in your keys)
-
-4. **Start**:
-   ```bash
-   # Terminal 1 - Backend
-   uvicorn backend.main:app --reload --port 8000
-   
-   # Terminal 2 - Frontend
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-5. **Open** [http://localhost:5173](http://localhost:5173) and sign in with Google!
-
-For detailed instructions, see [Setup Instructions](#setup-instructions) below.
-
 ---
 
 ## Table of Contents
@@ -67,8 +29,12 @@ For detailed instructions, see [Setup Instructions](#setup-instructions) below.
     - [Frontend (frontend/src/)](#frontend-frontendsrc)
     - [Prompt Templates (prompts/)](#prompt-templates-prompts)
 11. [Configuration & Customization](#configuration--customization)
-12. [Troubleshooting](#troubleshooting)
-13. [Legacy Interfaces](#legacy-interfaces)
+12. [Testing](#testing)
+    - [Test Suite Overview](#test-suite-overview)
+    - [Running the Tests](#running-the-tests)
+    - [Test Architecture & Integration](#test-architecture--integration)
+13. [Troubleshooting](#troubleshooting)
+14. [Legacy Interfaces](#legacy-interfaces)
 
 ---
 
@@ -173,12 +139,14 @@ ldsrag/
 ├── streamlit_app.py            # Streamlit UI (legacy)
 │
 ├── backend/                    # ── FastAPI Backend ──
+│   ├── __init__.py
 │   ├── main.py                 #   App factory, CORS, routers, startup
 │   ├── auth.py                 #   Google OAuth verification + JWT
 │   ├── models.py               #   SQLAlchemy models (User, Document)
 │   ├── database.py             #   SQLite engine + session
 │   ├── ocr.py                  #   Tesseract OCR processing
 │   └── routes/
+│       ├── __init__.py
 │       ├── auth.py             #   POST /api/auth/google, GET /api/auth/me
 │       ├── documents.py        #   POST /api/documents/upload, GET, DELETE
 │       └── rag.py              #   POST /api/rag/ingest, POST /api/rag/query
@@ -207,6 +175,7 @@ ldsrag/
 │           └── ChatPanel.jsx   #   Chat messages, sources, input
 │
 ├── src/                        # ── RAG Engine ──
+│   ├── __init__.py
 │   ├── loader.py               #   Steps A+B: Load PDF/TXT files
 │   ├── chunker.py              #   Step C: Split text into chunks
 │   ├── embedder.py             #   Step D: HuggingFace embed + ChromaDB
@@ -232,7 +201,8 @@ ldsrag/
 │
 ├── data/                       # ── Sample Documents ──
 │   ├── sample_document.txt
-│   └── machine_learning_guide.txt
+│   ├── machine_learning_guide.txt
+│   └── ai_complete_reference.pdf
 │
 ├── storage/                    # ── All Persistent Data (git-ignored) ──
 │   ├── db/                     #   SQLite database (rag.db)
@@ -241,6 +211,20 @@ ldsrag/
 │   ├── vectors/                #   Per-user vector databases
 │   │   └── <user-uuid>/
 │   └── shared_vectors/         #   Shared vector DB (legacy/CLI)
+│
+├── tests/                      # ── Test Suite ──
+│   ├── __init__.py
+│   ├── conftest.py             #   Shared fixtures (DB, user, mocks, client)
+│   ├── test_loader.py          #   Steps A+B: document loading
+│   ├── test_chunker.py         #   Step C: text chunking
+│   ├── test_embedder.py        #   Step D: embedding + ChromaDB storage
+│   ├── test_retriever.py       #   Steps 1-3: query retrieval
+│   ├── test_generator.py       #   Steps 4-5: LLM chain, dedup, formatting
+│   ├── test_auth.py            #   JWT, Google OAuth, user auth
+│   ├── test_api_documents.py   #   /api/documents/* endpoints
+│   ├── test_api_rag.py         #   /api/rag/* endpoints
+│   ├── test_pipeline.py        #   RAGPipeline end-to-end
+│   └── pytest.ini              #   pytest configuration (at project root)
 │
 ├── docs/                       # ── Documentation ──
 │   └── README.md
@@ -269,17 +253,15 @@ ldsrag/
 
 ```bash
 # Clone the repository
-git clone https://github.com/KS-Manoj9088/Enterprise_RAG.git
-cd Enterprise_RAG
+git clone https://github.com/Sriram-098/SummarizerUsingRag.git
+cd SummarizerUsingRag
 
 # Create a virtual environment
 python -m venv venv
 
 # Activate it
-# Windows (PowerShell):
-venv\Scripts\Activate.ps1
-# Windows (CMD):
-venv\Scripts\activate.bat
+# Windows:
+venv\Scripts\activate
 # Linux/Mac:
 source venv/bin/activate
 
@@ -331,12 +313,11 @@ OPENROUTER_API_KEY=sk-or-v1-your-key-here
 
 # Google OAuth (from Step 3)
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
 
 # JWT Secret (change this in production!)
 JWT_SECRET=some-random-secret-string
 ```
-
-> **Note:** The `GOOGLE_CLIENT_SECRET` is not required in the `.env` file for this application. Google OAuth verification is done using the client ID and Google's public keys.
 
 **Frontend** — create `frontend/.env`:
 
@@ -387,15 +368,10 @@ Open **two terminals**, both with the virtual environment activated:
 
 **Terminal 1 — Backend (FastAPI):**
 ```bash
-# Activate virtual environment first
-# Windows (PowerShell):
-venv\Scripts\Activate.ps1
-# Windows (CMD):
-venv\Scripts\activate.bat
-# Linux/Mac:
-source venv/bin/activate
+# Windows
+venv\Scripts\uvicorn.exe backend.main:app --reload --port 8000
 
-# Start the backend
+# Linux/Mac
 uvicorn backend.main:app --reload --port 8000
 ```
 
@@ -439,12 +415,12 @@ VITE v6.x.x  ready in xxx ms
 
 Ingestion is the one-time data preparation step:
 - **Load** → reads your uploaded files
-- **Extract** → pulls text from PDFs/TXT (with OCR fallback for scanned documents)
+- **Extract** → pulls text from PDFs/TXT
 - **Chunk** → splits text into 1000-char pieces (configurable)
-- **Embed** → converts each chunk into a 384-dimensional vector using HuggingFace's `all-MiniLM-L6-v2` model
+- **Embed** → converts each chunk into a 384-dimensional vector
 - **Store** → saves vectors into your private ChromaDB
 
-After ingestion, your vectors persist on disk in `storage/vectors/<user-uuid>/`. You only need to re-ingest when you add or remove documents.
+After ingestion, your vectors persist on disk. You only need to re-ingest when you add or remove documents.
 
 ---
 
@@ -466,10 +442,8 @@ After ingestion, your vectors persist on disk in `storage/vectors/<user-uuid>/`.
 | **1. Query** | User asks a question in chat | `src/retriever.py` | — |
 | **2. Embed Query** | Question converted to 384-dim vector | `src/retriever.py` | Same HuggingFace model |
 | **3. Retrieve** | Find top-K most similar chunks via cosine similarity | `src/retriever.py` | ChromaDB |
-| **4. LLM** | Send context + question to LLM with strict prompt | `src/generator.py` | OpenRouter *or* Ollama |
+| **Step 4 — LLM** | Send context + question to LLM with strict prompt | `src/generator.py` | OpenRouter *or* Ollama |
 | **5. Response** | LLM answers from documents only — no hallucination | `src/generator.py` | — |
-
-> **Note:** The CLI and Streamlit interfaces use `storage/shared_vectors/` for the vector database, while the enterprise web app uses per-user databases in `storage/vectors/<user-uuid>/`.
 
 ### Authentication Flow
 
@@ -564,8 +538,6 @@ Splits documents into smaller overlapping pieces using `RecursiveCharacterTextSp
 chunks = chunk_documents(documents, chunk_size=1000, chunk_overlap=100)
 # → [Document(page_content="chunk text...", metadata={"source": "file.pdf"}), ...]
 ```
-
-> **Note:** The file contains duplicate function definitions. This should be cleaned up in production code.
 
 #### `src/embedder.py` — Step D: Embed + Store
 
@@ -826,6 +798,79 @@ Adjustable via sidebar sliders. Changes apply on next ingest (chunk settings) or
 
 ---
 
+## Testing
+
+### Test Suite Overview
+
+The project includes **102 automated tests** across 9 test files plus shared fixtures.
+
+| File | Tests | What it covers |
+|------|-------|----------------|
+| `tests/test_loader.py` | 8 | Document loading from disk: TXT, PDF, unsupported types, metadata |
+| `tests/test_chunker.py` | 10 | Text splitting: chunk size, overlap, metadata preservation |
+| `tests/test_embedder.py` | 8 | HuggingFace embedding model, ChromaDB store creation, similarity search |
+| `tests/test_retriever.py` | 6 | Retriever creation, `top_k` parameter, `retrieve_relevant_docs()` |
+| `tests/test_generator.py` | 16 | `format_docs`, `deduplicate_docs`, RAG chain creation, `generate_response`, `direct_generate` |
+| `tests/test_auth.py` | 11 | JWT creation/decoding, Google token verification, `get_current_user` dependency |
+| `tests/test_api_documents.py` | 9 | Upload, list, and delete document API endpoints |
+| `tests/test_api_rag.py` | 12 | Stats, providers, ingest, and query RAG API endpoints |
+| `tests/test_pipeline.py` | 12 | `RAGPipeline` init, `ingest()`, `setup_qa()`, `query()` integration |
+
+### Running the Tests
+
+Activate the virtual environment first:
+
+```bash
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+```
+
+**Run the full test suite:**
+
+```bash
+python -m pytest
+```
+
+**Run only fast unit tests (no model loading):**
+
+```bash
+python -m pytest tests/test_loader.py tests/test_chunker.py tests/test_generator.py tests/test_retriever.py tests/test_auth.py
+```
+
+**Run a single test file:**
+
+```bash
+python -m pytest tests/test_api_rag.py -v
+```
+
+**Run a single test by name:**
+
+```bash
+python -m pytest tests/test_generator.py::TestDeduplicateDocs -v
+```
+
+**Run with coverage report:**
+
+```bash
+python -m pytest --cov=src --cov=backend --cov-report=term-missing
+```
+
+### Test Architecture
+
+| Concern | Approach |
+|---------|----------|
+| Database isolation | `StaticPool` in-memory SQLite shared across all connections so tables persist within a session |
+| User fixture | Session-scoped `sample_user` with `session.merge()` (upsert) to prevent UNIQUE constraint errors |
+| LLM & embeddings | Mocked via `unittest.mock` in API and generator tests to avoid network calls |
+| Real embedding model | Used in `test_embedder.py` and `test_pipeline.py` to validate the full embedding pipeline |
+| Windows ChromaDB locks | `_close_chroma()` helper closes the client and calls `gc.collect()` before temp dirs are removed |
+| Temp directory cleanup | `TemporaryDirectory(ignore_cleanup_errors=True)` prevents test failures from OS file locks |
+
+---
+
 ## Troubleshooting
 
 ### "Access blocked: no registered origin" on Google Sign-In
@@ -861,11 +906,11 @@ Tesseract is not installed on your system. See [Step 6](#step-6-optional-install
 
 ### `torch` / `torchvision` warnings on startup
 
-Non-critical warnings from the sentence-transformers library. Everything works normally. These can be safely ignored.
+Non-critical warnings from the sentence-transformers library file watcher. Everything works normally.
 
 ### Upload fails with 413 error
 
-File exceeds the 50 MB limit. The frontend checks client-side before uploading, but the backend also enforces this limit. Compress or split the document.
+File exceeds the 50 MB limit. The frontend also checks client-side before uploading. Compress or split the document.
 
 ### "No documents uploaded" when trying to ingest
 
@@ -881,43 +926,6 @@ Vite caches environment variables at build time. Stop the dev server (`Ctrl+C`) 
 - Verify `VITE_GOOGLE_CLIENT_ID` in `frontend/.env` matches your OAuth client
 - Make sure you selected **Web application** type (not Desktop) when creating the OAuth client
 - Ensure `http://localhost:5173` is in authorized origins (no trailing slash)
-
-### Windows PowerShell execution policy error
-
-If you get "cannot be loaded because running scripts is disabled", run PowerShell as Administrator and execute:
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-### Port already in use
-
-If port 8000 or 5173 is already in use:
-- **Backend**: Change port in the uvicorn command: `uvicorn backend.main:app --reload --port 8001`
-- **Frontend**: Change port in `frontend/vite.config.js` and update `VITE_API_URL` accordingly
-- **Find process**: 
-  ```bash
-  # Windows
-  netstat -ano | findstr :8000
-  taskkill /PID <process_id> /F
-  
-  # Linux/Mac
-  lsof -i :8000
-  kill -9 <process_id>
-  ```
-
-### Module not found errors
-
-Ensure you've activated the virtual environment before running any Python commands:
-```bash
-# Windows PowerShell
-venv\Scripts\Activate.ps1
-# Windows CMD
-venv\Scripts\activate.bat
-# Linux/Mac
-source venv/bin/activate
-```
-
-You should see `(venv)` in your terminal prompt.
 
 ---
 
@@ -945,236 +953,10 @@ The command-line interface is still available:
 python app.py
 ```
 
-Select provider at startup: `1` for OpenRouter, `2` for Ollama. Commands: `ingest`, `query`, `exit`. Uses the shared `data/` folder and `storage/shared_vectors/`.
-
----
-
-## Known Issues
-
-1. **Duplicate Code**: `src/chunker.py` contains duplicate function definitions that should be cleaned up.
-2. **Empty Init Files**: Several `__init__.py` files are empty but present for package structure.
-3. **Data Folder**: The `data/` folder is git-ignored, so sample documents need to be added manually after cloning.
-4. **Storage Folder**: The `storage/` folder is git-ignored and will be created automatically on first run.
-
----
-
-## Security Considerations
-
-For production deployment, ensure:
-
-1. **Environment Variables**: Never commit `.env` files. Use secure secret management (AWS Secrets Manager, Azure Key Vault, etc.)
-2. **JWT Secret**: Change the default JWT secret to a strong, randomly generated value
-3. **HTTPS**: Always use HTTPS in production. Update CORS origins and OAuth redirect URIs accordingly
-4. **Database**: Consider using PostgreSQL instead of SQLite for production workloads
-5. **File Upload**: The 50MB limit is enforced, but consider additional virus scanning for uploaded files
-6. **Rate Limiting**: Implement rate limiting on API endpoints to prevent abuse
-7. **OAuth Scopes**: Review and minimize OAuth scopes to only what's necessary
-8. **Error Messages**: Avoid exposing sensitive information in error messages in production
-
----
-
-## Performance Optimization
-
-For better performance:
-
-1. **Embedding Model**: The default `all-MiniLM-L6-v2` is fast but consider larger models for better accuracy
-2. **Vector Database**: ChromaDB works well for small-medium datasets. For large scale, consider Pinecone, Weaviate, or Qdrant
-3. **Caching**: The backend caches RAG pipelines per user in memory. Consider Redis for distributed deployments
-4. **Chunking**: Experiment with chunk size and overlap based on your document types
-5. **Top-K**: Adjust the number of retrieved chunks based on your use case (more = better context but slower)
-
----
-
-## Deployment
-
-### Docker Deployment (Recommended)
-
-Create a `Dockerfile` for the backend:
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-Create a `docker-compose.yml`:
-```yaml
-version: '3.8'
-services:
-  backend:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - JWT_SECRET=${JWT_SECRET}
-    volumes:
-      - ./storage:/app/storage
-  
-  frontend:
-    image: node:18
-    working_dir: /app
-    command: sh -c "npm install && npm run build && npx serve -s dist -l 5173"
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-    environment:
-      - VITE_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - VITE_API_URL=http://localhost:8000
-```
-
-### Cloud Deployment
-
-**Backend Options:**
-- **Railway**: Connect GitHub repo, set environment variables, deploy
-- **Render**: Web service from GitHub, add environment variables
-- **AWS EC2**: Traditional VM deployment with systemd service
-- **Google Cloud Run**: Containerized deployment with auto-scaling
-
-**Frontend Options:**
-- **Vercel**: Connect GitHub repo, set build command `npm run build`, output directory `dist`
-- **Netlify**: Similar to Vercel, automatic deployments from GitHub
-- **AWS S3 + CloudFront**: Static hosting with CDN
-
-**Important for Production:**
-1. Update CORS origins in `backend/main.py` to your production frontend URL
-2. Update Google OAuth authorized origins and redirect URIs
-3. Use environment-specific `.env` files
-4. Set up proper logging and monitoring
-5. Use a production-grade database (PostgreSQL)
-6. Implement proper backup strategies for user data
-
----
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-- Code follows existing patterns and style
-- All new features include appropriate error handling
-- Environment variables are documented in `.env.example`
-- README is updated for any new features or changes
-
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Make your changes
-4. Test thoroughly (both CLI and web interfaces)
-5. Commit with clear messages: `git commit -m "Add: feature description"`
-6. Push to your fork: `git push origin feature/your-feature`
-7. Open a Pull Request
-
----
-
-## Technology Choices Explained
-
-### Why HuggingFace Embeddings?
-- **Free**: No API costs, runs locally
-- **Fast**: `all-MiniLM-L6-v2` is optimized for speed
-- **Good Quality**: 384-dimensional embeddings work well for most use cases
-- **Offline**: Works without internet after initial download
-
-### Why ChromaDB?
-- **Simple**: Easy to set up, no separate server needed
-- **Persistent**: Automatically saves to disk
-- **Fast**: Efficient similarity search for small-medium datasets
-- **Python-native**: Integrates seamlessly with LangChain
-
-### Why OpenRouter?
-- **Free Tier**: Multiple free models available
-- **No Credit Card**: Sign up without payment info
-- **Variety**: Access to different model providers
-- **OpenAI-compatible**: Easy to switch to other providers
-
-### Why FastAPI?
-- **Fast**: High performance async framework
-- **Modern**: Type hints, automatic validation
-- **Documentation**: Auto-generated Swagger docs
-- **WebSockets**: Ready for real-time features
-
-### Why React + Vite?
-- **Fast**: Vite provides instant HMR (Hot Module Replacement)
-- **Modern**: React 19 with hooks and context
-- **Tailwind**: Utility-first CSS for rapid UI development
-- **Type-safe**: Easy to add TypeScript later
-
----
-
-## Frequently Asked Questions
-
-**Q: Can I use this commercially?**  
-A: Check the licenses of individual dependencies. OpenRouter and Google OAuth have usage terms you should review.
-
-**Q: How much does it cost to run?**  
-A: Zero for development. OpenRouter free tier + Google OAuth free tier + local embeddings = $0/month.
-
-**Q: Can I use my own LLM?**  
-A: Yes! Use Ollama for fully local inference, or modify `src/generator.py` to connect to any OpenAI-compatible API.
-
-**Q: How many documents can it handle?**  
-A: ChromaDB can handle thousands of documents. For larger datasets, consider switching to a production vector database.
-
-**Q: Is my data private?**  
-A: Yes, when using Ollama (fully local). With OpenRouter, your queries are sent to their API. Read their privacy policy.
-
-**Q: Can I customize the prompts?**  
-A: Absolutely! See the `prompts/` folder for 9 different prompt templates. Edit or create your own.
-
-**Q: Does it work offline?**  
-A: Partially. Embeddings work offline. LLM requires either Ollama (local) or internet for OpenRouter.
-
-**Q: Can I deploy this to production?**  
-A: Yes, but review the Security Considerations section first. This is an educational project and needs hardening for production.
+Select provider at startup: `1` for OpenRouter, `2` for Ollama. Commands: `ingest`, `query`, `exit`. Uses the shared `data/` folder and `vectordb/`.
 
 ---
 
 ## License
 
-This project is for educational and demonstration purposes.
-
-**Dependencies:**
-- LangChain: MIT License
-- ChromaDB: Apache 2.0 License
-- FastAPI: MIT License
-- React: MIT License
-- HuggingFace Transformers: Apache 2.0 License
-
-**Third-Party Services:**
-- OpenRouter: Review their [Terms of Service](https://openrouter.ai/terms)
-- Google OAuth: Review [Google API Terms](https://developers.google.com/terms)
-
-**Disclaimer:** This software is provided "as is" without warranty of any kind. Use at your own risk.
-
----
-
-## Acknowledgments
-
-Built with:
-- [LangChain](https://langchain.com/) - RAG orchestration framework
-- [ChromaDB](https://www.trychroma.com/) - Vector database
-- [HuggingFace](https://huggingface.co/) - Embedding models
-- [OpenRouter](https://openrouter.ai/) - LLM API aggregator
-- [Ollama](https://ollama.com/) - Local LLM runtime
-- [FastAPI](https://fastapi.tiangolo.com/) - Backend framework
-- [React](https://react.dev/) - Frontend framework
-- [Vite](https://vitejs.dev/) - Build tool
-- [Tailwind CSS](https://tailwindcss.com/) - Styling
-- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) - Text extraction
-
-Special thanks to the open-source community for making this possible.
-
----
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/KS-Manoj9088/Enterprise_RAG/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/KS-Manoj9088/Enterprise_RAG/discussions)
-- **Documentation**: This README and inline code comments
-
----
-
-**Made with ❤️ for the AI community**
+This project is for educational purposes. Uses free tiers of OpenRouter and Google OAuth.
