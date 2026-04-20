@@ -15,7 +15,6 @@ from backend.routes.documents import get_user_data_path
 from src.loader import load_documents
 from src.chunker import chunk_documents
 from src.embedder import get_embedding_model, store_in_vectordb, load_vectordb
-from src.retriever import get_retriever
 from src.generator import get_llm, create_rag_chain, generate_response, direct_generate, is_ollama_available, list_ollama_models
 from prompts.analytical.summarizer import SUMMARY_PROMPT
 from prompts.analytical.comparison import COMPARISON_PROMPT
@@ -102,10 +101,11 @@ class IngestRequest(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
-    top_k: int = 3
+    top_k: int = 5
     model: str = "z-ai/glm-4.5-air:free"
     provider: str = "openrouter"  # 'openrouter' or 'ollama'
     prompt_style: str = "auto"    # 'auto' | 'strict' | 'strict_cited' | 'summary' | 'conversational' | 'eli5' | 'technical' | 'academic' | 'legal' | 'comparison' | 'step_by_step'
+    document_id: str | None = None  # Optional: scope query to a specific document
 
 
 class IngestResponse(BaseModel):
@@ -146,7 +146,51 @@ def ingest_documents(
     # Step C: Chunk
     chunks = chunk_documents(documents, body.chunk_size, body.chunk_overlap)
 
-    # Step D: Embed + store
+    # Step D: Wipe the existing vector DB then re-embed from scratch.
+    # This ensures stale chunks from previously ingested (or deleted) documents
+    # are never returned by the retriever.
+    #
+    # On Windows, ChromaDB keeps binary index files open as long as any
+    # Python object holds a reference to the client. We must release all
+    # references BEFORE calling shutil.rmtree, otherwise we get WinError 32.
+    import shutil
+    import gc
+
+    # 1. Release the cached pipeline (holds the live ChromaDB client)
+    evicted = _user_pipelines.pop(user.id, None)
+    if evicted:
+        try:
+            # Try to delete the collection via API first (releases file locks)
+            col_name = evicted["vectordb"]._collection.name
+            evicted["vectordb"]._client.delete_collection(col_name)
+        except Exception:
+            pass
+        try:
+            evicted["vectordb"]._client.close()
+        except Exception:
+            pass
+        del evicted
+
+    # 2. Force garbage collection so the file handles are actually closed
+    gc.collect()
+
+    # 3. Now safe to delete the directory on Windows
+    if os.path.exists(vectordb_path):
+        try:
+            shutil.rmtree(vectordb_path)
+            print(f"[Ingest] Cleared old vector DB at {vectordb_path}")
+        except PermissionError as e:
+            # Last resort: delete only the SQLite DB and segment files,
+            # leaving the directory structure; ChromaDB will overwrite them.
+            print(f"[Ingest] Warning: could not fully clear vector DB ({e}). Attempting partial clear.")
+            for root, dirs, files in os.walk(vectordb_path):
+                for fname in files:
+                    try:
+                        os.remove(os.path.join(root, fname))
+                    except Exception:
+                        pass
+    os.makedirs(vectordb_path, exist_ok=True)
+
     embeddings = get_embedding_model()
     vectordb = store_in_vectordb(chunks, embeddings, vectordb_path)
 
@@ -173,6 +217,7 @@ def ingest_documents(
 def query_rag(
     body: QueryRequest,
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     Query the user's private RAG pipeline.
@@ -198,16 +243,16 @@ def query_rag(
     # ── Resolve effective prompt style ──
     style = body.prompt_style if body.prompt_style in PROMPT_STYLES else "strict"
     if style == "auto":
-        style = "summary" if _is_summary_query(body.question) else "strict"
+        style = "summary" if _is_summary_query(body.question) else "conversational"
     elif style == "general" and _is_summary_query(body.question):
         # General mode silently promotes to summary when user asks for one
         style = "summary"
     elif style == "strict" and _is_summary_query(body.question):
-        # Strict mode blocks summary requests
+        # Strict mode blocks full-document summary requests
         return {
             "answer": (
-                "⚠️ **Strict Q&A mode does not produce summaries.**\n\n"
-                "Switch **Response Style → General** in the sidebar to get a summary."
+                "⚠️ **Strict Q&A mode does not produce full-document summaries.**\n\n"
+                "Switch **Response Style → Summary** in the sidebar to get a summary."
             ),
             "sources": [],
             "time_seconds": 0.0,
@@ -217,6 +262,21 @@ def query_rag(
     # Summary-mode needs more chunks to cover the whole document
     is_summary_mode = style == "summary"
     effective_top_k = _SUMMARY_TOP_K if is_summary_mode else body.top_k
+
+    # ── Resolve document filter ──
+    doc_filter = None
+    if body.document_id:
+        target_doc = db.query(Document).filter(
+            Document.id == body.document_id,
+            Document.user_id == user.id,
+        ).first()
+        if target_doc:
+            # The 'source' metadata stored in ChromaDB contains the file path
+            # which includes the safe filename. Use $contains to match it.
+            doc_filter = {"source": {"$contains": target_doc.filename}}
+            print(f"[FILTER] Scoping retrieval to document: {target_doc.original_name} ({target_doc.filename})")
+        else:
+            print(f"[FILTER] document_id={body.document_id} not found, querying all documents")
 
     cache_key = user.id
     pipeline = _user_pipelines.get(cache_key)
@@ -233,9 +293,7 @@ def query_rag(
         try:
             embeddings = get_embedding_model()
             vectordb = load_vectordb(embeddings, vectordb_path)
-            retriever = get_retriever(vectordb, top_k=effective_top_k)
             llm = get_llm(body.model, provider=body.provider)
-            rag_chain = create_rag_chain(llm, retriever, prompt_template=chosen_prompt)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except Exception as exc:
@@ -245,11 +303,30 @@ def query_rag(
             "model": body.model,
             "provider": body.provider,
             "top_k": effective_top_k,
-            "retriever": retriever,
-            "rag_chain": rag_chain,
             "vectordb": vectordb,
         }
         _user_pipelines[cache_key] = pipeline
+
+    # ── Always build a fresh retriever with the current filter ──
+    if doc_filter:
+        # Single-document mode: plain similarity is fine, filter scopes to that doc
+        search_kwargs = {"k": effective_top_k, "filter": doc_filter}
+        search_type = "similarity"
+        print(f"[RETRIEVER] Single-doc filtered retriever: {doc_filter}")
+    else:
+        # All-documents mode: use MMR so results are diverse across documents
+        # fetch_k >> k ensures candidates from multiple docs before re-ranking
+        search_kwargs = {
+            "k": effective_top_k,
+            "fetch_k": max(effective_top_k * 6, 20),
+            "lambda_mult": 0.5,  # 0=max diversity, 1=max relevance
+        }
+        search_type = "mmr"
+        print(f"[RETRIEVER] All-docs MMR retriever (k={effective_top_k}, fetch_k={search_kwargs['fetch_k']})")
+    scoped_retriever = pipeline["vectordb"].as_retriever(
+        search_type=search_type,
+        search_kwargs=search_kwargs,
+    )
 
     # ── For summary mode: use direct_generate with a broad retrieval query
     #    so the vector search finds real content instead of matching the
@@ -258,9 +335,12 @@ def query_rag(
         try:
             llm = get_llm(body.model, provider=body.provider)
             # Use MMR for diverse chunk coverage of the document
+            mmr_search_kwargs = {"k": effective_top_k, "fetch_k": effective_top_k * 4}
+            if doc_filter:
+                mmr_search_kwargs["filter"] = doc_filter
             mmr_retriever = pipeline["vectordb"].as_retriever(
                 search_type="mmr",
-                search_kwargs={"k": effective_top_k, "fetch_k": effective_top_k * 4},
+                search_kwargs=mmr_search_kwargs,
             )
             answer, sources = direct_generate(
                 llm=llm,
@@ -280,13 +360,13 @@ def query_rag(
         # Normal (non-summary) mode: rebuild chain with chosen prompt and invoke
         try:
             llm = get_llm(body.model, provider=body.provider)
-            active_chain = create_rag_chain(llm, pipeline["retriever"], prompt_template=chosen_prompt)
+            active_chain = create_rag_chain(llm, scoped_retriever, prompt_template=chosen_prompt)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"LLM init failed: {exc}")
 
         try:
             answer, sources = generate_response(
-                active_chain, body.question, pipeline["retriever"]
+                active_chain, body.question, scoped_retriever
             )
         except Exception as exc:
             # Log the full traceback to the terminal for debugging

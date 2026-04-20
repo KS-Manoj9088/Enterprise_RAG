@@ -125,7 +125,7 @@ def delete_document(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete a document and its stored file."""
+    """Delete a document, its stored file, and all its chunks from the vector DB."""
     doc = db.query(Document).filter(Document.id == doc_id, Document.user_id == user.id).first()
     if not doc:
         raise HTTPException(404, "Document not found")
@@ -139,6 +139,51 @@ def delete_document(
     ocr_path = file_path + ".ocr.txt"
     if os.path.exists(ocr_path):
         os.remove(ocr_path)
+
+    # ── Remove chunks from ChromaDB ──
+    # Chunks are stored with a 'source' metadata field containing the full file path.
+    # We delete every chunk whose source contains this document's filename.
+    try:
+        from src.embedder import get_embedding_model, load_vectordb
+        from backend.routes.rag import get_user_vectordb_path, _user_pipelines
+        import gc
+
+        vectordb_path = get_user_vectordb_path(user.id)
+        if os.path.exists(vectordb_path):
+            # Use the cached vectordb if available, otherwise load it
+            pipeline = _user_pipelines.get(user.id)
+            if pipeline and "vectordb" in pipeline:
+                vectordb = pipeline["vectordb"]
+            else:
+                embeddings = get_embedding_model()
+                vectordb = load_vectordb(embeddings, vectordb_path)
+
+            collection = vectordb._collection
+
+            # Find all chunk IDs whose 'source' metadata contains this filename
+            results = collection.get(
+                where={"source": {"$contains": doc.filename}},
+                include=["metadatas"],
+            )
+            chunk_ids = results.get("ids", [])
+            if chunk_ids:
+                collection.delete(ids=chunk_ids)
+                print(f"[Delete] Removed {len(chunk_ids)} chunks for '{doc.original_name}' from vector DB")
+            else:
+                print(f"[Delete] No chunks found in vector DB for '{doc.original_name}'")
+
+            # Evict the cached pipeline so it reloads fresh on next query
+            evicted = _user_pipelines.pop(user.id, None)
+            if evicted:
+                try:
+                    evicted["vectordb"]._client.close()
+                except Exception:
+                    pass
+                del evicted
+            gc.collect()
+    except Exception as e:
+        # Don't fail the whole delete if chunk cleanup fails — just log it
+        print(f"[Delete] Warning: could not remove chunks from vector DB: {e}")
 
     db.delete(doc)
     db.commit()
