@@ -180,6 +180,20 @@ def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
+def deduplicate_docs(docs):
+    """Remove duplicate chunks that have identical page content."""
+    seen = set()
+    unique = []
+    for doc in docs:
+        content = doc.page_content.strip()
+        if content not in seen:
+            seen.add(content)
+            unique.append(doc)
+    if len(unique) < len(docs):
+        print(f"[Dedup] Removed {len(docs) - len(unique)} duplicate chunks ({len(unique)} unique remaining)")
+    return unique
+
+
 def create_rag_chain(llm, retriever, prompt_template: str | None = None):
     """
     Create the complete RAG chain connecting retriever → LLM.
@@ -203,7 +217,7 @@ def create_rag_chain(llm, retriever, prompt_template: str | None = None):
     )
 
     rag_chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
+        {"context": retriever | deduplicate_docs | format_docs, "question": RunnablePassthrough()}
         | prompt
         | llm
         | StrOutputParser()
@@ -234,9 +248,10 @@ def generate_response(rag_chain, query: str, retriever=None):
     answer = rag_chain.invoke(query)
 
     # Fetch source docs separately if retriever is provided
-    sources = retriever.invoke(query) if retriever else []
+    raw_sources = retriever.invoke(query) if retriever else []
+    sources = deduplicate_docs(raw_sources)
 
-    print(f"[5] Response generated ({len(answer)} chars, {len(sources)} sources)")
+    print(f"[5] Response generated ({len(answer)} chars, {len(sources)} unique sources)")
     print(f"{'='*60}\n")
 
     return answer, sources
@@ -265,8 +280,9 @@ def direct_generate(llm, prompt_template: str, retriever, retrieval_query: str, 
     print(f"[2] Retrieval query: {retrieval_query}")
 
     # Step 2+3: retrieve with the broad query
-    docs = retriever.invoke(retrieval_query)
-    print(f"[3] Retrieved {len(docs)} chunks")
+    raw_docs = retriever.invoke(retrieval_query)
+    docs = deduplicate_docs(raw_docs)
+    print(f"[3] Retrieved {len(docs)} unique chunks (from {len(raw_docs)} total)")
 
     if not docs:
         msg = "No relevant content was found in your documents for this question."
