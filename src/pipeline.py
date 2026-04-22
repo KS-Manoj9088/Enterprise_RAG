@@ -59,7 +59,7 @@ class RAGPipeline:
         D → Embedding + Store in Vector Database
         """
         print("\n" + "=" * 60)
-        print("  DATA PREPARATION: A → B → C → D")
+        print("  DATA PREPARATION: A -> B -> C -> D")
         print("=" * 60 + "\n")
 
         # Step A + B: Load raw data and extract text
@@ -76,13 +76,13 @@ class RAGPipeline:
         chunks = chunk_documents(documents, chunk_size, chunk_overlap)
 
         # Step D: Embedding + Vector Database
-        print("\n--- Step D: Embedding → Vector Database ---")
+        print("\n--- Step D: Embedding -> Vector Database ---")
         self.embeddings = get_embedding_model()
         self.vectordb = store_in_vectordb(chunks, self.embeddings, self.vectordb_path)
 
         print("\n" + "=" * 60)
         print("  DATA PREPARATION COMPLETE!")
-        print(f"  {len(documents)} documents → {len(chunks)} chunks → Vector DB")
+        print(f"  {len(documents)} documents -> {len(chunks)} chunks -> Vector DB")
         print("=" * 60 + "\n")
         return True
 

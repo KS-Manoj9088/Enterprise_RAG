@@ -32,7 +32,7 @@ def chunk_documents(documents, chunk_size=1000, chunk_overlap=100):
 
     chunks = text_splitter.split_documents(documents)
 
-    print(f"[C] Chunking: {len(documents)} documents → {len(chunks)} chunks")
+    print(f"[C] Chunking: {len(documents)} documents -> {len(chunks)} chunks")
     print(f"[C] Settings: chunk_size={chunk_size}, overlap={chunk_overlap}")
 
     return chunks
@@ -71,7 +71,7 @@ def chunk_documents(documents, chunk_size=1000, chunk_overlap=100):
 
     chunks = text_splitter.split_documents(documents)
 
-    print(f"[C] Chunking: {len(documents)} documents → {len(chunks)} chunks")
+    print(f"[C] Chunking: {len(documents)} documents -> {len(chunks)} chunks")
     print(f"[C] Settings: chunk_size={chunk_size}, overlap={chunk_overlap}")
 
     return chunks

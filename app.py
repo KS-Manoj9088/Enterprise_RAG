@@ -32,13 +32,13 @@ from src.pipeline import RAGPipeline
 def print_banner():
     print("\n" + "=" * 60)
     print("""
-    ╔═══════════════════════════════════════╗
-    ║   RAG - Retrieval Augmented Generation ║
-    ╚═══════════════════════════════════════╝
+    +=======================================+
+    |   RAG - Retrieval Augmented Generation |
+    +=======================================+
 
     Architecture:
-    A (Data) → B (Extract) → C (Chunk) → D (Embed) → VectorDB
-    Query(1) → Embed(2) → Retrieve(3) → LLM(4) → Response(5)
+    A (Data) -> B (Extract) -> C (Chunk) -> D (Embed) -> VectorDB
+    Query(1) -> Embed(2) -> Retrieve(3) -> LLM(4) -> Response(5)
     """)
     print("=" * 60)
 
@@ -46,11 +46,11 @@ def print_banner():
 def print_help():
     print("""
     Commands:
-    ─────────────────────────────────────────
-    ingest   Process documents (A → B → C → D)
-    query    Ask questions     (1 → 2 → 3 → 4 → 5)
+    -----------------------------------------
+    ingest   Process documents (A -> B -> C -> D)
+    query    Ask questions     (1 -> 2 -> 3 -> 4 -> 5)
     exit     Quit the application
-    ─────────────────────────────────────────
+    -----------------------------------------
     """)
 
 
@@ -67,11 +67,11 @@ def main():
     from src.generator import is_ollama_available, list_ollama_models
 
     print("    Select LLM Provider:")
-    print("      1. OpenRouter (cloud — free API key needed)")
+    print("      1. OpenRouter (cloud - free API key needed)")
     print("      2. Ollama")
     provider_choice = input("\n    Provider [1/2] (default=1): ").strip()
 
-    if provider_choice == "2":
+    if provider_choice == "2" or provider_choice.lower() == "ollama":
         LLM_PROVIDER = "ollama"
         if is_ollama_available():
             models = list_ollama_models()

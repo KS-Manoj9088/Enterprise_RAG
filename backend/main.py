@@ -58,8 +58,8 @@ app.include_router(rag_router)
 def on_startup():
     """Initialize database tables on startup."""
     init_db()
-    print("✅ Database initialized")
-    print("✅ Enterprise RAG API ready")
+    print("[OK] Database initialized")
+    print("[OK] Enterprise RAG API ready")
 
 
 @app.get("/api/health")

@@ -222,7 +222,7 @@ def create_rag_chain(llm, retriever, prompt_template: str | None = None):
         | llm
         | StrOutputParser()
     )
-    print("[4+5] RAG Chain created: Retriever → LLM → Response")
+    print("[4+5] RAG Chain created: Retriever -> LLM -> Response")
     return rag_chain
 
 

@@ -5,6 +5,27 @@ Step D: Embedding + Vector Database
 Embeds chunks using HuggingFace (FREE, local) and stores in ChromaDB.
 This maps to step D and the Vector Database in the RAG architecture diagram.
 """
+import os
+
+# ── Offline detection ──────────────────────────────────────────────
+# huggingface_hub reads HF_HUB_OFFLINE into a module-level constant
+# at *import* time, so the env var MUST be set BEFORE importing any
+# HuggingFace library.  We use stdlib `socket` (zero extra deps).
+def _detect_offline(timeout=2) -> bool:
+    """Return True if HuggingFace Hub is unreachable."""
+    import socket
+    try:
+        socket.create_connection(("huggingface.co", 443), timeout=timeout)
+        return False
+    except OSError:
+        return True
+
+if _detect_offline():
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    print("[D] Offline mode detected - will use cached embedding model")
+# ───────────────────────────────────────────────────────────────────
+
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
@@ -18,7 +39,10 @@ def get_embedding_model(model_name=EMBEDDING_MODEL):
     Load the embedding model (runs locally, FREE).
 
     Architecture Mapping:
-        D → Embedding (convert text chunks to vectors)
+        D -> Embedding (convert text chunks to vectors)
+
+    If no internet is available the model is loaded from the local
+    HuggingFace cache (set once on first online run).
 
     Returns:
         HuggingFaceEmbeddings model
