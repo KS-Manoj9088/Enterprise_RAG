@@ -6,7 +6,7 @@ Embeds chunks using HuggingFace (FREE, local) and stores in ChromaDB.
 This maps to step D and the Vector Database in the RAG architecture diagram.
 """
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 
 # FREE local embedding model - no API key needed
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"

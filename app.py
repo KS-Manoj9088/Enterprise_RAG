@@ -68,7 +68,7 @@ def main():
 
     print("    Select LLM Provider:")
     print("      1. OpenRouter (cloud — free API key needed)")
-    print("      2. Ollama     (local — no internet needed)")
+    print("      2. Ollama")
     provider_choice = input("\n    Provider [1/2] (default=1): ").strip()
 
     if provider_choice == "2":

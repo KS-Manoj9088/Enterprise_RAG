@@ -69,7 +69,7 @@ class TestStoreAndLoadVectorDB:
 
     def test_store_returns_chroma_instance(self):
         from src.embedder import get_embedding_model, store_in_vectordb
-        from langchain_community.vectorstores import Chroma
+        from langchain_chroma import Chroma
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             persist_dir = os.path.join(tmpdir, "vectordb")
             embeddings = get_embedding_model()
